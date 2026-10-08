@@ -316,7 +316,7 @@ legend {
 .standings tbody tr:hover td { background: var(--soft); }
 .standings .leader .pos span { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
 
-@media (max-width: 370px) {
+@media (max-width: 340px) {
   .standings { font-size: 0.9rem; }
   .standings .opt { display: none; }
   .standings td, .standings th { padding-left: 4px; padding-right: 4px; }

@@ -3,8 +3,13 @@
 Web para armar ligas de pádel en formato americano: cada jugador carga cómo salió su partido (sets y games) y la tabla se actualiza sola.
 
 - **Puntos:** ganar suma 1 punto, perder 0.
-- **Orden:** puntos; con los mismos puntos queda arriba quien jugó menos partidos. Si coinciden puntos y partidos jugados, comparten posición (no hay desempate).
-- **Diferencia de sets y games:** se muestran como dato informativo. El super tie-break (un set que se gana con 10 o más) cuenta como un game.
+- **Orden:** puntos; con los mismos puntos queda arriba quien jugó menos partidos.
+- **Desempate** (mismos puntos y mismos partidos jugados), en este orden:
+  1. diferencia de games (el super tie-break, un set que se gana con 10 o más, vale 1 game),
+  2. diferencia de sets,
+  3. resultado entre ellos en los partidos donde se enfrentaron como rivales (+1 por cada rival del grupo al que le ganó, −1 por cada uno con el que perdió).
+
+  Si todo coincide, comparten la posición.
 
 ## Importar partidos
 

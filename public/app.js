@@ -363,9 +363,10 @@ function standingsView(league) {
     ${league.matches.length ? '' : `
       <p class="note">Todavía no hay partidos. Cargá el primero o <a href="#importar">importalos todos juntos</a>.</p>`}
     <p class="note">
-      Ganar suma 1 punto y perder 0. Con los mismos puntos queda arriba quien jugó menos partidos;
-      si además jugaron los mismos partidos, comparten la posición. ±S y ±G (diferencia de sets y de games)
-      son solo informativos. Tocá un jugador para ver sus partidos.
+      Ganar suma 1 punto y perder 0. Con los mismos puntos queda arriba quien jugó menos partidos.
+      Si además jugaron los mismos partidos, desempata: 1) diferencia de games (±G, el super tie-break vale 1 game),
+      2) diferencia de sets (±S) y 3) resultado entre ellos cuando se enfrentaron como rivales.
+      Si todo coincide, comparten la posición. Tocá un jugador para ver sus partidos.
     </p>`;
 }
 

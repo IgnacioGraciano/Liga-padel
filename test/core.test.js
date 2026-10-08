@@ -29,14 +29,35 @@ test('tabla: 1 punto por victoria y, a igualdad de puntos, menos partidos arriba
   const byName = Object.fromEntries(rows.map((r) => [r.name, r]));
   assert.equal(byName.Ana.pts, 2);
   assert.equal(byName.Ana.pos, 1);
-  // Bruno y Carla: 1 punto en 3 partidos. Dani y Eva: 1 punto en 2 partidos → arriba.
-  assert.deepEqual(rows.map((r) => r.name), ['Ana', 'Dani', 'Eva', 'Bruno', 'Carla']);
-  // Sin desempate: misma posición cuando coinciden puntos y partidos.
-  assert.equal(byName.Dani.pos, 2);
-  assert.equal(byName.Eva.pos, 2);
-  assert.equal(byName.Bruno.pos, 4);
-  assert.equal(byName.Carla.pos, 4);
   assert.equal(byName.Ana.gf - byName.Ana.gc, 4 + 8);
+  // Dani y Eva: 1 punto en 2 partidos, arriba de Bruno y Carla (1 punto en 3).
+  // Entre ellos desempata la diferencia de games: Dani 0, Eva −4; Carla 0, Bruno −8.
+  assert.deepEqual(rows.map((r) => [r.name, r.pos]), [['Ana', 1], ['Dani', 2], ['Eva', 3], ['Carla', 4], ['Bruno', 5]]);
+});
+
+const league8 = (matches) => ({
+  players: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].map((id) => ({ id, name: id })),
+  matches,
+});
+const positions = (l) => Object.fromEntries(computeStandings(l).map((r) => [r.name, r.pos]));
+
+test('desempate por diferencia de sets cuando coinciden los games', () => {
+  const pos = positions(league8([
+    match(['A', 'C'], ['D', 'E'], [[6, 0]]), // +6 games, +1 set
+    match(['B', 'F'], ['G', 'H'], [[6, 3], [6, 3]]), // +6 games, +2 sets
+  ]));
+  assert.deepEqual(pos, { B: 1, F: 1, A: 3, C: 3, D: 5, E: 5, G: 7, H: 7 });
+});
+
+test('desempate por resultado entre rivales y posición compartida si todo coincide', () => {
+  const pos = positions(league8([
+    match(['A', 'C'], ['B', 'D'], [[6, 4]]),
+    match(['B', 'E'], ['F', 'G'], [[6, 4]]),
+    match(['F', 'G'], ['A', 'H'], [[6, 4]]),
+  ]));
+  // A, B, F y G: 1 punto en 2 partidos, games y sets en 0.
+  // Contra rivales del grupo: B +1 (perdió con A, ganó a F y G), F y G 0, A −1.
+  assert.deepEqual(pos, { C: 1, E: 1, B: 3, F: 4, G: 4, A: 6, D: 7, H: 7 });
 });
 
 test('parseImport entiende texto libre con y sin fecha', () => {

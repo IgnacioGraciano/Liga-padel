@@ -96,14 +96,18 @@ export const formatSets = (sets) => sets.map(([x, y]) => `${x}-${y}`).join(' ');
 // ---------- Tabla ----------
 
 // Orden: puntos (desc) y, a igualdad de puntos, menos partidos jugados arriba.
-// Si coinciden puntos y partidos jugados no se desempata: comparten posición.
+// Si además coinciden los partidos jugados, se desempata en este orden:
+//   1. diferencia de games (el super tie-break vale 1 game),
+//   2. diferencia de sets,
+//   3. resultado entre ellos en los partidos donde se enfrentaron como rivales.
+// Si todo sigue igual, comparten la posición.
 export function computeStandings(league) {
   const rows = new Map(league.players.map((p) => [p.id, {
     id: p.id, name: p.name, pts: 0, pj: 0, pg: 0, pp: 0, sf: 0, sc: 0, gf: 0, gc: 0,
   }]));
+  const results = league.matches.map((m) => ({ m, s: summarize(m.sets) }));
 
-  for (const m of league.matches) {
-    const s = summarize(m.sets);
+  for (const { m, s } of results) {
     for (const side of ['a', 'b']) {
       const mine = side === 'a' ? [s.setsA, s.gamesA] : [s.setsB, s.gamesB];
       const theirs = side === 'a' ? [s.setsB, s.gamesB] : [s.setsA, s.gamesA];
@@ -118,16 +122,52 @@ export function computeStandings(league) {
     }
   }
 
-  const list = [...rows.values()].sort((x, y) =>
-    y.pts - x.pts || x.pj - y.pj || compareNames(x.name, y.name));
+  // Cada criterio devuelve una función de puntaje (mayor es mejor) para un grupo empatado.
+  const criteria = [
+    () => (r) => r.gf - r.gc,
+    () => (r) => r.sf - r.sc,
+    (group) => {
+      // Por cada rival del grupo que tuvo enfrente: +1 si ganó ese partido, −1 si perdió.
+      const ids = new Set(group.map((r) => r.id));
+      const score = new Map(group.map((r) => [r.id, 0]));
+      for (const { m, s } of results) {
+        for (const [side, other] of [['a', 'b'], ['b', 'a']]) {
+          const rivals = m[other].filter((id) => ids.has(id)).length;
+          if (!rivals) continue;
+          for (const id of m[side]) {
+            if (ids.has(id)) score.set(id, score.get(id) + (s.winner === side ? rivals : -rivals));
+          }
+        }
+      }
+      return (r) => score.get(r.id);
+    },
+  ];
 
-  list.forEach((r, i) => {
-    const prev = list[i - 1];
-    r.pos = prev && prev.pts === r.pts && prev.pj === r.pj ? prev.pos : i + 1;
-  });
-  list.forEach((r, i) => {
-    r.tied = list[i - 1]?.pos === r.pos || list[i + 1]?.pos === r.pos;
-  });
+  // Separa un grupo empatado aplicando los criterios en orden; devuelve los
+  // subgrupos que siguen empatados, ya ordenados.
+  const split = (group, level) => {
+    if (group.length < 2 || level === criteria.length) return [group];
+    const value = criteria[level](group);
+    const sorted = [...group].sort((x, y) => value(y) - value(x));
+    const out = [];
+    for (let i = 0, j; i < sorted.length; i = j) {
+      for (j = i + 1; j < sorted.length && value(sorted[j]) === value(sorted[i]); j++);
+      out.push(...split(sorted.slice(i, j), level + 1));
+    }
+    return out;
+  };
+
+  const base = [...rows.values()].sort((x, y) => y.pts - x.pts || x.pj - y.pj);
+  const list = [];
+  for (let i = 0, j; i < base.length; i = j) {
+    for (j = i + 1; j < base.length && base[j].pts === base[i].pts && base[j].pj === base[i].pj; j++);
+    for (const group of split(base.slice(i, j), 0)) {
+      const pos = list.length + 1;
+      for (const r of group.sort((x, y) => compareNames(x.name, y.name))) {
+        list.push(Object.assign(r, { pos, tied: group.length > 1 }));
+      }
+    }
+  }
   return list;
 }
 
