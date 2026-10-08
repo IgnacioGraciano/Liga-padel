@@ -1,0 +1,6 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "outputDirectory": "public",
+  "regions": ["gru1"],
+  "rewrites": [{ "source": "/liga/:id", "destination": "/index.html" }]
+}

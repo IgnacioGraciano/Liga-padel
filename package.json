@@ -1,0 +1,12 @@
+{
+  "name": "liga-padel",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node dev-server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@vercel/blob": "2.8.0"
+  }
+}
