@@ -27,6 +27,8 @@ fecha;jugador1;jugador2;jugador3;jugador4;set1;set2;set3
 2026-10-01;Ana;Bruno;Carla;Dani;6-4;3-6;10-8
 ```
 
+**Fixture:** una línea sin resultado (por ejemplo `19/10 Ana / Dani vs Bruno / Carla`, o una fila de CSV con los sets vacíos) carga un partido *por jugar*. No cuenta en la tabla; en *Partidos → Por jugar* cada partido tiene un botón para cargar su resultado con las parejas y la fecha ya completas. Si se carga o importa un resultado de unas parejas que tenían un partido por jugar, se completa ese partido en vez de crear otro.
+
 Antes de importar se ve una vista previa con los errores de cada línea, los jugadores nuevos y los partidos que ya estaban cargados (que se omiten). *Exportar* descarga los partidos en ese mismo formato.
 
 ## Cómo está hecho

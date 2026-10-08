@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import {
-  LIMITS, cleanName, findPlayerByName, matchError, todayISO,
+  LIMITS, byDate, cleanName, findPlayerByName, isPending, matchError, pairsKey, todayISO,
 } from '../public/core.js';
 import { readLeague, createLeague, updateLeague, ConflictError } from '../lib/store.js';
 
@@ -76,6 +76,19 @@ function resolvePlayer(league, ref, create) {
   throw new HttpError(400, `"${cleanName(ref)}" no está en la liga`);
 }
 
+// Al cargar un resultado se completa el partido programado: el indicado en
+// `fillsId` o, si no se indica, el próximo por jugar entre esas mismas parejas.
+function pendingToFill(league, match, fillsId) {
+  if (fillsId) {
+    const target = league.matches.find((m) => m.id === fillsId);
+    if (!target) throw new HttpError(404, 'Ese partido programado ya no existe');
+    if (!isPending(target)) throw new HttpError(409, 'Ese partido ya tiene el resultado cargado');
+    return target;
+  }
+  const key = pairsKey(match.a, match.b);
+  return league.matches.filter((m) => isPending(m) && pairsKey(m.a, m.b) === key).sort(byDate)[0] ?? null;
+}
+
 const toSets = (sets) => (Array.isArray(sets)
   ? sets.map((s) => (Array.isArray(s) ? [Number(s[0]), Number(s[1])] : [NaN, NaN]))
   : []);
@@ -113,17 +126,21 @@ const actions = {
       }
       const now = new Date().toISOString();
       matches.forEach((m, i) => {
+        const sets = toSets(m?.sets);
         const match = {
           id: newId(8),
-          date: m?.date || todayISO(),
+          // Sin resultado es un partido por jugar, que puede no tener fecha.
+          date: m?.date || (sets.length ? todayISO() : null),
           a: (Array.isArray(m?.a) ? m.a : []).map((ref) => resolvePlayer(league, ref, createPlayers)),
           b: (Array.isArray(m?.b) ? m.b : []).map((ref) => resolvePlayer(league, ref, createPlayers)),
-          sets: toSets(m?.sets),
+          sets,
           createdAt: now,
         };
         const error = matchError(match, new Set(league.players.map((p) => p.id)));
         if (error) throw new HttpError(400, matches.length > 1 ? `Partido ${i + 1}: ${error}` : error);
-        league.matches.push(match);
+        const target = sets.length ? pendingToFill(league, match, m?.fills) : null;
+        if (target) Object.assign(target, { date: match.date, a: match.a, b: match.b, sets });
+        else league.matches.push(match);
       });
       return league;
     });
@@ -158,7 +175,7 @@ const actions = {
   removePlayer({ id, playerId }) {
     return mutate(id, (league) => {
       if (league.matches.some((m) => m.a.includes(playerId) || m.b.includes(playerId))) {
-        throw new HttpError(400, 'Tiene partidos cargados: borrá esos partidos primero');
+        throw new HttpError(400, 'Tiene partidos jugados o por jugar: borrá esos partidos primero');
       }
       league.players = league.players.filter((p) => p.id !== playerId);
       return league;

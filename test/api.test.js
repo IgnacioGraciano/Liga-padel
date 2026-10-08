@@ -73,3 +73,52 @@ test('acciones inválidas', async () => {
   assert.equal((await call({ action: 'addPlayer', id: 'missing1', name: 'X' })).status, 404);
   assert.equal((await call({ action: 'toString' })).status, 400);
 });
+
+test('fixture: partidos por jugar y carga de su resultado', async () => {
+  const { league } = await call({ action: 'create', name: 'Fixture', players: ['A', 'B', 'C', 'D', 'E'] });
+  const { id } = league;
+  const [a, b, c, d, e] = league.players.map((p) => p.id);
+
+  const fixture = await call({
+    action: 'addMatches', id,
+    matches: [
+      { date: '2026-10-19', a: [a, b], b: [c, d] },
+      { a: [a, c], b: [b, e], sets: [] },
+      { a: [a, c], b: [b, d], sets: [] },
+    ],
+  });
+  assert.equal(fixture.status, 200);
+  const [m1, m2, m3] = fixture.league.matches;
+  assert.deepEqual([m1.date, m2.date, m1.sets], ['2026-10-19', null, []]);
+
+  // Resultado de un partido programado indicado explícitamente.
+  const filled = await call({
+    action: 'addMatches', id,
+    matches: [{ fills: m1.id, date: '2026-10-20', a: [a, b], b: [c, d], sets: [[6, 3], [6, 2]] }],
+  });
+  assert.equal(filled.status, 200);
+  assert.equal(filled.league.matches.length, 3);
+  const done = filled.league.matches.find((m) => m.id === m1.id);
+  assert.deepEqual([done.date, done.sets], ['2026-10-20', [[6, 3], [6, 2]]]);
+
+  // Volver a cargar el mismo partido avisa que ya tiene resultado.
+  const again = await call({
+    action: 'addMatches', id,
+    matches: [{ fills: m1.id, date: '2026-10-20', a: [a, b], b: [c, d], sets: [[6, 3]] }],
+  });
+  assert.equal(again.status, 409);
+
+  // Sin indicar cuál, completa el programado de esas parejas (aunque vengan invertidas).
+  const auto = await call({
+    action: 'addMatches', id,
+    matches: [{ date: '2026-10-21', a: [e, b], b: [c, a], sets: [[2, 6]] }],
+  });
+  assert.equal(auto.league.matches.length, 3);
+  const m2done = auto.league.matches.find((m) => m.id === m2.id);
+  assert.deepEqual([m2done.a, m2done.b, m2done.sets], [[e, b], [c, a], [[2, 6]]]);
+
+  // Con un partido por jugar no se puede quitar al jugador.
+  assert.ok(auto.league.matches.find((m) => m.id === m3.id).sets.length === 0);
+  const remove = await call({ action: 'removePlayer', id, playerId: d });
+  assert.equal(remove.status, 400);
+});

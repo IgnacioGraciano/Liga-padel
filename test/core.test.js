@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  computeStandings, parseImport, resolveImport, setsError, summarize, toCSV, parseDate,
+  computeStandings, parseImport, resolveImport, setsError, summarize, toCSV, parseDate, isPending,
 } from '../public/core.js';
 
 const players = ['Ana', 'Bruno', 'Carla', 'Dani', 'Eva'].map((name, i) => ({ id: `p${i}`, name }));
@@ -66,7 +66,7 @@ test('parseImport entiende texto libre con y sin fecha', () => {
     12/10/2026 Ana y Carla contra Bruno y Dani: 6-2, 6-3
     # comentario
     Ana / Bruno vs Carla 6-4
-    Ana / Bruno vs Carla / Dani
+    Ana / Bruno vs Carla / Dani 6
     Ana / Bruno vs Carla / Dani 7-6(5) 6-4
   `, { today: '2026-10-08' });
   assert.equal(rows.length, 5);
@@ -77,7 +77,7 @@ test('parseImport entiende texto libre con y sin fecha', () => {
   assert.equal(rows[1].date, '2026-10-12');
   assert.deepEqual(rows[1].sets, [[6, 2], [6, 3]]);
   assert.match(rows[2].error, /2 jugadores/);
-  assert.match(rows[3].error, /Falta el resultado/);
+  assert.match(rows[3].error, /incompleto/);
   assert.deepEqual(rows[4].sets, [[7, 6], [6, 4]]);
 });
 
@@ -127,4 +127,58 @@ test('parseDate', () => {
   assert.equal(parseDate('5/1/26'), '2026-01-05');
   assert.equal(parseDate('5/1', new Date(2027, 0, 1)), '2027-01-05');
   assert.equal(parseDate('30/02/2026'), null);
+});
+
+test('fixture: líneas sin resultado quedan por jugar, con o sin fecha', () => {
+  const rows = parseImport([
+    '19/10/2026 Ana / Bruno vs Carla / Dani',
+    'Ana / Carla vs Bruno / Eva',
+    '2026-10-26;Ana;Dani;Bruno;Carla;;;',
+    ';Bruno;Carla;Dani;Eva',
+  ].join('\n'), { today: '2026-10-08' });
+  assert.deepEqual(rows.map((r) => [r.date, r.sets, r.error]), [
+    ['2026-10-19', [], null],
+    [null, [], null],
+    ['2026-10-26', [], null],
+    [null, [], null],
+  ]);
+  assert.deepEqual(rows[1].b, ['Bruno', 'Eva']);
+});
+
+test('los partidos por jugar no cuentan en la tabla', () => {
+  const rows = computeStandings(league([
+    match(['p0', 'p1'], ['p2', 'p3'], [[6, 4]]),
+    { ...match(['p0', 'p2'], ['p1', 'p3'], []), date: null },
+  ]));
+  const ana = rows.find((r) => r.name === 'Ana');
+  assert.equal(ana.pj, 1);
+  assert.equal(rows.find((r) => r.name === 'Carla').pj, 1);
+  assert.ok(isPending({ sets: [] }));
+});
+
+test('resolveImport: fixture repetido se omite y un resultado completa el programado', () => {
+  const l = league([
+    { ...match(['p0', 'p1'], ['p2', 'p3'], []), date: '2026-10-19' }, // por jugar
+    match(['p0', 'p2'], ['p1', 'p3'], [[6, 1]]), // jugado
+  ]);
+  const rows = parseImport([
+    'Ana / Bruno vs Carla / Dani', // ya programado
+    'Carla / Ana vs Dani / Bruno', // ya jugado (otro orden)
+    'Ana / Eva vs Carla / Dani', // nuevo por jugar
+    'Dani / Carla vs Bruno / Ana 4-6 4-6', // resultado del programado
+  ].join('\n'), { today: '2026-10-08' });
+  const res = resolveImport(rows, l);
+  assert.deepEqual(res.items.map((i) => i.status), ['duplicate', 'duplicate', 'ok', 'ok']);
+  assert.equal(res.items[3].fills, true);
+  assert.equal(res.items[2].fills, false);
+  assert.deepEqual(res.matches[0].sets, []);
+  assert.equal(res.matches[0].date, null);
+});
+
+test('toCSV exporta los partidos por jugar sin sets y se pueden reimportar', () => {
+  const l = league([{ ...match(['p0', 'p1'], ['p2', 'p3'], []), date: null }]);
+  const rows = parseImport(toCSV(l));
+  assert.equal(rows.length, 1);
+  assert.deepEqual(rows[0].sets, []);
+  assert.equal(resolveImport(rows, l).items[0].status, 'duplicate');
 });

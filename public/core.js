@@ -82,16 +82,25 @@ export function setsError(sets) {
   return null;
 }
 
+// Un partido sin sets es un partido programado que todavía no se jugó.
+export const isPending = (match) => match.sets.length === 0;
+
 export function matchError(match, playerIds) {
-  if (!isValidISODate(match.date)) return 'Fecha inválida';
+  const pending = Array.isArray(match.sets) && match.sets.length === 0;
+  // Un partido por jugar puede no tener fecha todavía.
+  if (!(pending && match.date === null) && !isValidISODate(match.date)) return 'Fecha inválida';
   if (match.a?.length !== 2 || match.b?.length !== 2) return 'Cada pareja necesita 2 jugadores';
   const ids = [...match.a, ...match.b];
   if (ids.some((id) => !playerIds.has(id))) return 'Hay un jugador que no está en la liga';
   if (new Set(ids).size !== 4) return 'Un jugador no puede estar dos veces en el mismo partido';
-  return setsError(match.sets);
+  return pending ? null : setsError(match.sets);
 }
 
 export const formatSets = (sets) => sets.map(([x, y]) => `${x}-${y}`).join(' ');
+
+// Orden cronológico; los partidos sin fecha van al final.
+export const byDate = (x, y) => (x.date ?? '9999').localeCompare(y.date ?? '9999') ||
+  String(x.createdAt).localeCompare(String(y.createdAt));
 
 // ---------- Tabla ----------
 
@@ -105,7 +114,7 @@ export function computeStandings(league) {
   const rows = new Map(league.players.map((p) => [p.id, {
     id: p.id, name: p.name, pts: 0, pj: 0, pg: 0, pp: 0, sf: 0, sc: 0, gf: 0, gc: 0,
   }]));
-  const results = league.matches.map((m) => ({ m, s: summarize(m.sets) }));
+  const results = league.matches.filter((m) => !isPending(m)).map((m) => ({ m, s: summarize(m.sets) }));
 
   for (const { m, s } of results) {
     for (const side of ['a', 'b']) {
@@ -176,6 +185,8 @@ export function computeStandings(league) {
 // Formato de texto, un partido por línea (la fecha es opcional):
 //   Ana / Bruno vs Carla / Dani 6-4 3-6 7-5
 //   12/10 Ana / Carla vs Bruno / Dani 6-2 6-3
+// Sin resultado, el partido queda programado (por jugar):
+//   19/10 Ana / Dani vs Bruno / Carla
 //
 // Formato planilla (CSV con ; o , o filas copiadas de Excel/Sheets):
 //   fecha;jugador1;jugador2;jugador3;jugador4;set1;set2;set3
@@ -214,10 +225,11 @@ function parseTextLine(line, today) {
   const left = rest.slice(0, vs.index);
   const right = rest.slice(vs.index + vs[0].length);
   const firstScore = right.search(/\d{1,2}\s*[-–:/]\s*\d{1,2}/);
-  if (firstScore < 0) return { error: 'Falta el resultado (ej. 6-4 6-3)' };
+  if (firstScore < 0 && /\d\s*$/.test(right)) return { error: 'Resultado incompleto (ej. 6-4 6-3)' };
   const a = splitPair(left);
-  const b = splitPair(right.slice(0, firstScore).replace(/[\s:,;(–-]+$/, ''));
+  const b = splitPair((firstScore < 0 ? right : right.slice(0, firstScore)).replace(/[\s:,;(–-]+$/, ''));
   if (!a || !b) return { error: 'Cada pareja necesita 2 jugadores separados por "/"' };
+  if (firstScore < 0) return { date, explicitDate: Boolean(date), a, b, sets: [] };
   const sets = parseSets(right.slice(firstScore));
   if (!sets) return { error: 'No se entiende el resultado (usá 6-4 6-3)' };
   return { date: date ?? today, explicitDate: Boolean(date), a, b, sets };
@@ -253,6 +265,7 @@ function parseCsvFields(fields, today) {
   const names = fields.slice(i, i + 4).map(cleanName);
   if (names.length < 4 || names.some((n) => !n)) return { error: 'Faltan jugadores (van 4 columnas de jugadores)' };
   const rest = fields.slice(i + 4).filter(Boolean);
+  if (!rest.length) return { date, explicitDate: Boolean(date), a: names.slice(0, 2), b: names.slice(2, 4), sets: [] };
   let sets;
   if (rest.length && rest.every((f) => /^\d{1,2}$/.test(f))) {
     // Games en columnas sueltas: 6;4;3;6 → 6-4 3-6
@@ -278,6 +291,7 @@ function isHeader(fields) {
 }
 
 // Devuelve una fila por línea no vacía: { line, raw, date, explicitDate, a, b, sets } o { line, raw, error }.
+// Las filas sin resultado vienen con sets vacío (partido por jugar) y, si no tienen fecha, date null.
 export function parseImport(text, { today = todayISO() } = {}) {
   const rows = [];
   String(text ?? '').replace(/^﻿/, '').split(/\r?\n/).forEach((rawLine, idx) => {
@@ -292,14 +306,21 @@ export function parseImport(text, { today = todayISO() } = {}) {
     } else {
       parsed = parseTextLine(raw, today);
     }
-    if (!parsed.error) parsed.error = setsError(parsed.sets);
+    if (!parsed.error && parsed.sets.length) parsed.error = setsError(parsed.sets);
     rows.push({ line: idx + 1, raw, ...parsed, error: parsed.error || null });
   });
   return rows;
 }
 
-// Clave canónica de un partido para detectar duplicados (no importa el orden
-// de los jugadores dentro de la pareja ni qué pareja va primero).
+// Clave de las dos parejas sin importar el orden de los jugadores ni de las parejas.
+export function pairsKey(a, b) {
+  const x = [...a].sort().join('+');
+  const y = [...b].sort().join('+');
+  return x < y ? `${x}|${y}` : `${y}|${x}`;
+}
+
+// Clave canónica de un partido jugado para detectar duplicados (no importa el
+// orden de los jugadores dentro de la pareja ni qué pareja va primero).
 function matchKey(aKeys, bKeys, sets) {
   let a = [...aKeys].sort().join('+');
   let b = [...bKeys].sort().join('+');
@@ -308,15 +329,31 @@ function matchKey(aKeys, bKeys, sets) {
   return `${a}|${b}|${formatSets(s)}`;
 }
 
-// Cruza las filas parseadas con la liga: detecta jugadores nuevos, duplicados
-// y arma la lista de partidos lista para enviar a la API.
+// Cruza las filas parseadas con la liga: detecta jugadores nuevos, duplicados,
+// resultados que completan un partido programado y arma la lista de partidos
+// lista para enviar a la API.
 export function resolveImport(rows, league, { createPlayers = true, skipDuplicates = true } = {}) {
   const known = new Map(league.players.map((p) => [nameKey(p.name), p]));
-  const existing = new Map();
+  const played = new Map(); // partido jugado → fechas
+  const allPairs = new Map(); // parejas → cantidad de partidos (jugados o por jugar)
+  const pendingPairs = new Map(); // parejas → cantidad de partidos por jugar
+  const bump = (map, key) => map.set(key, (map.get(key) ?? 0) + 1);
+  const take = (map, key) => {
+    const n = map.get(key) ?? 0;
+    if (n) map.set(key, n - 1);
+    return n > 0;
+  };
   for (const m of league.matches) {
-    const key = matchKey(m.a.map((id) => keyOfId(league, id)), m.b.map((id) => keyOfId(league, id)), m.sets);
-    if (!existing.has(key)) existing.set(key, new Set());
-    existing.get(key).add(m.date);
+    const a = m.a.map((id) => keyOfId(league, id));
+    const b = m.b.map((id) => keyOfId(league, id));
+    bump(allPairs, pairsKey(a, b));
+    if (isPending(m)) {
+      bump(pendingPairs, pairsKey(a, b));
+      continue;
+    }
+    const key = matchKey(a, b, m.sets);
+    if (!played.has(key)) played.set(key, new Set());
+    played.get(key).add(m.date);
   }
 
   const newPlayers = new Map();
@@ -329,15 +366,22 @@ export function resolveImport(rows, league, { createPlayers = true, skipDuplicat
     if (unknown.length && !createPlayers) {
       return { ...row, status: 'error', error: `No están en la liga: ${unknown.join(', ')}` };
     }
-    const dates = existing.get(matchKey(keys.slice(0, 2), keys.slice(2), row.sets));
-    if (skipDuplicates && dates && (!row.explicitDate || dates.has(row.date))) {
-      return { ...row, status: 'duplicate' };
+    const pk = pairsKey(keys.slice(0, 2), keys.slice(2));
+    if (skipDuplicates) {
+      // Un partido por jugar ya está si esas parejas ya tienen un partido (jugado o no).
+      const dates = played.get(matchKey(keys.slice(0, 2), keys.slice(2), row.sets));
+      const duplicate = row.sets.length
+        ? dates && (!row.explicitDate || dates.has(row.date))
+        : take(allPairs, pk);
+      if (duplicate) return { ...row, status: 'duplicate' };
     }
     for (const n of unknown) if (!newPlayers.has(nameKey(n))) newPlayers.set(nameKey(n), n);
     const ref = (n) => known.get(nameKey(n))?.id ?? cleanName(n);
     return {
       ...row,
       status: 'ok',
+      // Un resultado de unas parejas que tenían un partido programado lo completa.
+      fills: row.sets.length > 0 && take(pendingPairs, pk),
       match: { date: row.date, a: row.a.map(ref), b: row.b.map(ref), sets: row.sets },
     };
   });
@@ -357,8 +401,7 @@ function keyOfId(league, id) {
 
 export function toCSV(league) {
   const names = new Map(league.players.map((p) => [p.id, p.name]));
-  const matches = [...league.matches].sort((x, y) =>
-    x.date.localeCompare(y.date) || String(x.createdAt).localeCompare(String(y.createdAt)));
+  const matches = [...league.matches].sort(byDate);
   const setCols = Math.max(3, ...matches.map((m) => m.sets.length));
   const header = [...CSV_HEADER.slice(0, 5), ...Array.from({ length: setCols }, (_, i) => `set${i + 1}`)];
   const quote = (v) => (/[;"\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
@@ -366,7 +409,7 @@ export function toCSV(league) {
   for (const m of matches) {
     const sets = m.sets.map(([x, y]) => `${x}-${y}`);
     while (sets.length < setCols) sets.push('');
-    lines.push([m.date, ...[...m.a, ...m.b].map((id) => names.get(id) ?? '?'), ...sets].map(quote).join(';'));
+    lines.push([m.date ?? '', ...[...m.a, ...m.b].map((id) => names.get(id) ?? '?'), ...sets].map(quote).join(';'));
   }
   return lines.join('\r\n');
 }

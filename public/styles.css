@@ -239,6 +239,7 @@ legend {
 .top { display: flex; align-items: center; gap: 6px; margin: 0 -8px 16px; }
 .top .title { flex: 1; min-width: 0; }
 .top h1 { overflow: hidden; font-size: 1.25rem; white-space: nowrap; text-overflow: ellipsis; }
+.top .title p { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
 .tabs {
   display: grid;
@@ -335,6 +336,22 @@ legend {
 
 .player-summary { margin: 14px 4px 0; font-size: 0.9rem; }
 
+.chips { display: flex; gap: 8px; margin-top: 14px; }
+.chip {
+  min-height: 36px;
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 560;
+  cursor: pointer;
+}
+.chip span { margin-left: 6px; font-variant-numeric: tabular-nums; opacity: 0.75; }
+.chip[aria-pressed="true"] { border-color: var(--ink); background: var(--ink); color: var(--bg); }
+
 .day {
   margin: 22px 4px 8px;
   font-size: 0.78rem;
@@ -356,6 +373,10 @@ legend {
 .side .games { display: flex; gap: 4px; font-variant-numeric: tabular-nums; }
 .side .games span { width: 1.6em; color: var(--muted); text-align: center; }
 .side .games span.w { color: var(--ink); font-weight: 700; }
+.match.pending { gap: 8px; }
+.match.pending .score { color: inherit; text-decoration: none; }
+.match.pending .pair { color: var(--ink); }
+.match.pending .dot { background: var(--line); }
 
 /* ---------- Cargar partido ---------- */
 

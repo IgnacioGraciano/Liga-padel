@@ -11,6 +11,7 @@ const state = {
   busy: false,
   importText: '',
   importOpts: { createPlayers: true, skipDuplicates: true },
+  matchList: null, // 'pending' | 'played'; por defecto, "Por jugar" si hay partidos programados
 };
 
 // ---------- Utilidades ----------
@@ -38,6 +39,7 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const dayFmt = new Intl.DateTimeFormat('es', { weekday: 'short', day: 'numeric', month: 'short' });
 const dayFmtYear = new Intl.DateTimeFormat('es', { day: 'numeric', month: 'short', year: 'numeric' });
 function formatDay(iso) {
+  if (!iso) return 'Sin fecha';
   const [y, m, d] = iso.split('-').map(Number);
   return (y === new Date().getFullYear() ? dayFmt : dayFmtYear).format(new Date(y, m - 1, d));
 }
@@ -212,7 +214,7 @@ function render({ soft = false } = {}) {
   }
   if (!id) renderHome();
   else if (!state.league) renderStatus();
-  else if (view === 'cargar') renderMatchForm();
+  else if (view === 'cargar') renderMatchForm(null, arg);
   else if (view === 'importar') renderImport();
   else renderLeague(['partidos', 'jugadores'].includes(view) ? view : 'tabla', arg);
   if (viewKey !== lastView && !soft) scrollTo(0, 0);
@@ -285,10 +287,16 @@ function leagueHeader(league) {
       <a class="icon-btn" href="/" data-link aria-label="Inicio">${icon('back')}</a>
       <div class="title">
         <h1>${esc(league.name)}</h1>
-        <p class="muted small">${plural(league.players.length, 'jugador', 'jugadores')} · ${plural(league.matches.length, 'partido', 'partidos')}</p>
+        <p class="muted small">${plural(league.players.length, 'jugador', 'jugadores')} · ${matchCount(league)}</p>
       </div>
       <button class="btn sm" data-action="share">${icon('share')}Compartir</button>
     </header>`;
+}
+
+function matchCount(league) {
+  const pending = league.matches.filter(core.isPending).length;
+  const played = league.matches.length - pending;
+  return pending ? `${played}/${league.matches.length} jugados` : plural(played, 'partido', 'partidos');
 }
 
 function subHeader(title, back) {
@@ -360,8 +368,9 @@ function standingsView(league) {
         </tbody>
       </table>
     </div>
-    ${league.matches.length ? '' : `
-      <p class="note">Todavía no hay partidos. Cargá el primero o <a href="#importar">importalos todos juntos</a>.</p>`}
+    ${league.matches.some((m) => !core.isPending(m)) ? '' : league.matches.length ? `
+      <p class="note">Todavía no se jugó ningún partido. Entrá a <a href="#partidos">Partidos</a> y tocá uno para cargar el resultado.</p>` : `
+      <p class="note">Todavía no hay partidos. Cargá el primero o <a href="#importar">importalos todos juntos</a> (también el fixture sin resultados).</p>`}
     <p class="note">
       Ganar suma 1 punto y perder 0. Con los mismos puntos queda arriba quien jugó menos partidos.
       Si además jugaron los mismos partidos, desempata: 1) diferencia de games (±G, el super tie-break vale 1 game),
@@ -373,9 +382,11 @@ function standingsView(league) {
 function matchesView(league, playerId) {
   const names = playerNames(league);
   const filter = names.has(playerId) ? playerId : '';
-  const matches = league.matches
-    .filter((m) => !filter || m.a.includes(filter) || m.b.includes(filter))
-    .sort((x, y) => y.date.localeCompare(x.date) || String(y.createdAt).localeCompare(String(x.createdAt)));
+  const mine = league.matches.filter((m) => !filter || m.a.includes(filter) || m.b.includes(filter));
+  const pending = mine.filter(core.isPending).sort(core.byDate);
+  const played = mine.filter((m) => !core.isPending(m)).sort((x, y) => core.byDate(y, x));
+  const hasPending = league.matches.some(core.isPending);
+  const list = hasPending ? state.matchList ?? 'pending' : 'played';
 
   const toolbar = `
     <div class="toolbar">
@@ -393,51 +404,79 @@ function matchesView(league, playerId) {
     summary = `<p class="player-summary"><b>${esc(r.name)}</b> · ${r.pos}º · ${plural(r.pts, 'punto', 'puntos')} · ${plural(r.pg, 'ganado', 'ganados')} · ${plural(r.pp, 'perdido', 'perdidos')}</p>`;
   }
 
-  if (!matches.length) {
-    return `${toolbar}${summary}
-      <div class="empty">
-        <h2>${filter ? 'Sin partidos' : 'Todavía no hay partidos'}</h2>
-        <p>${filter ? 'Este jugador todavía no jugó.' : 'Cargalos de a uno o importalos todos juntos.'}</p>
-      </div>`;
+  const chip = (key, label, n) => `
+    <button class="chip" data-action="match-list" data-list="${key}" aria-pressed="${list === key}">${label}<span>${n}</span></button>`;
+  const chips = hasPending
+    ? `<div class="chips">${chip('pending', 'Por jugar', pending.length)}${chip('played', 'Jugados', played.length)}</div>`
+    : '';
+
+  const shown = list === 'pending' ? pending : played;
+  if (!shown.length) {
+    const [title, text] = list === 'pending'
+      ? ['No hay partidos por jugar', filter ? 'Este jugador no tiene partidos programados.' : 'Ya se jugaron todos.']
+      : [filter ? 'Sin partidos jugados' : 'Todavía no hay partidos',
+        filter ? 'Este jugador todavía no jugó.' : 'Cargalos de a uno o importalos todos juntos (también el fixture sin resultados).'];
+    return `${toolbar}${summary}${chips}
+      <div class="empty"><h2>${title}</h2><p>${text}</p></div>`;
   }
 
   const groups = [];
-  for (const m of matches) {
-    if (groups.at(-1)?.date !== m.date) groups.push({ date: m.date, matches: [] });
+  for (const m of shown) {
+    if (!groups.length || groups.at(-1).date !== m.date) groups.push({ date: m.date, matches: [] });
     groups.at(-1).matches.push(m);
   }
-  return `${toolbar}${summary}
+  const card = list === 'pending' ? pendingCard : matchCard;
+  return `${toolbar}${summary}${chips}
     ${groups.map((g) => `
       <h3 class="day">${formatDay(g.date)}</h3>
-      <div class="card flush">${g.matches.map((m) => matchCard(m, names, filter)).join('')}</div>`).join('')}`;
+      <div class="card flush">${g.matches.map((m) => card(m, names, filter)).join('')}</div>`).join('')}`;
 }
+
+const pairNames = (ids, names, highlight) => ids
+  .map((id) => `<span${id === highlight ? ' class="hl"' : ''}>${esc(names.get(id) ?? '?')}</span>`)
+  .join(' · ');
+
+const deleteButton = (match) => `
+  <button class="icon-btn quiet" data-action="delete-match" data-id="${esc(match.id)}" aria-label="Borrar partido">${icon('trash')}</button>`;
 
 function matchCard(match, names, highlight) {
   const s = core.summarize(match.sets);
   const side = (key) => {
-    const pair = match[key]
-      .map((id) => `<span${id === highlight ? ' class="hl"' : ''}>${esc(names.get(id) ?? '?')}</span>`)
-      .join(' · ');
     const games = match.sets.map(([x, y]) => {
       const [mine, theirs] = key === 'a' ? [x, y] : [y, x];
       return `<span${mine > theirs ? ' class="w"' : ''}>${mine}</span>`;
     }).join('');
     return `
       <div class="side${s.winner === key ? ' win' : ''}">
-        <i class="dot"></i><span class="pair">${pair}</span><span class="games">${games}</span>
+        <i class="dot"></i><span class="pair">${pairNames(match[key], names, highlight)}</span><span class="games">${games}</span>
       </div>`;
   };
   return `
     <article class="match">
       <div class="score">${side('a')}${side('b')}</div>
-      <button class="icon-btn quiet" data-action="delete-match" data-id="${esc(match.id)}" aria-label="Borrar partido">${icon('trash')}</button>
+      ${deleteButton(match)}
+    </article>`;
+}
+
+function pendingCard(match, names, highlight) {
+  const href = `#cargar/${esc(match.id)}`;
+  const side = (key) => `<div class="side"><i class="dot"></i><span class="pair">${pairNames(match[key], names, highlight)}</span></div>`;
+  return `
+    <article class="match pending">
+      <a class="score" href="${href}" tabindex="-1" aria-hidden="true">${side('a')}${side('b')}</a>
+      <a class="btn sm" href="${href}">${icon('plus')}Resultado</a>
+      ${deleteButton(match)}
     </article>`;
 }
 
 function playersView(league) {
   const played = new Map();
+  const scheduled = new Set();
   for (const m of league.matches) {
-    for (const id of [...m.a, ...m.b]) played.set(id, (played.get(id) ?? 0) + 1);
+    for (const id of [...m.a, ...m.b]) {
+      if (core.isPending(m)) scheduled.add(id);
+      else played.set(id, (played.get(id) ?? 0) + 1);
+    }
   }
   const list = sortedPlayers(league);
   return `
@@ -454,13 +493,13 @@ function playersView(league) {
               <span class="grow">${esc(p.name)}</span>
               <span class="count">${n} PJ</span>
               <button class="icon-btn quiet" data-action="rename-player" data-id="${esc(p.id)}" aria-label="Cambiar nombre de ${esc(p.name)}">${icon('edit')}</button>
-              ${n
+              ${n || scheduled.has(p.id)
                 ? '<span class="icon-btn placeholder" aria-hidden="true"></span>'
                 : `<button class="icon-btn quiet" data-action="remove-player" data-id="${esc(p.id)}" aria-label="Quitar a ${esc(p.name)}">${icon('trash')}</button>`}
             </li>`;
         }).join('')}
       </ul>
-      <p class="note">Solo se puede quitar a un jugador que no tenga partidos cargados.</p>` : ''}
+      <p class="note">Solo se puede quitar a un jugador que no tenga partidos jugados ni por jugar.</p>` : ''}
 
     <section class="block">
       <h2 class="section-title">Liga</h2>
@@ -476,13 +515,23 @@ function playersView(league) {
 
 const SLOTS = ['a1', 'a2', 'b1', 'b2'];
 
-function renderMatchForm(previous = null) {
+// Con `fillId` se carga el resultado de un partido programado: las parejas y la
+// fecha vienen completas.
+function renderMatchForm(previous = null, fillId = '') {
   const league = state.league;
-  document.title = `Cargar partido · ${league.name}`;
+  const target = fillId ? league.matches.find((m) => m.id === fillId) : null;
+  if (fillId && !(target && core.isPending(target))) {
+    toast(target ? 'Ese partido ya tiene el resultado cargado' : 'Ese partido ya no está en la liga', true);
+    go('#partidos', true);
+    return;
+  }
+  const title = target ? 'Cargar resultado' : 'Cargar partido';
+  const back = target ? '#partidos' : '#tabla';
+  document.title = `${title} · ${league.name}`;
   const players = sortedPlayers(league);
   if (players.length < 4) {
     app.innerHTML = `
-      ${subHeader('Cargar partido', '#tabla')}
+      ${subHeader(title, back)}
       <div class="card empty">
         <h2>Faltan jugadores</h2>
         <p>Necesitás al menos 4 jugadores en la liga para cargar un partido.</p>
@@ -498,8 +547,8 @@ function renderMatchForm(previous = null) {
     <input name="s${n}b" inputmode="numeric" maxlength="2" aria-label="Set ${n}, games de la pareja 2">`;
 
   app.innerHTML = `
-    ${subHeader('Cargar partido', '#tabla')}
-    <form id="match-form" class="stack" autocomplete="off" novalidate>
+    ${subHeader(title, back)}
+    <form id="match-form" class="stack" autocomplete="off" novalidate data-fills="${esc(target?.id ?? '')}">
       <div class="card stack">
         <fieldset>
           <legend>Pareja 1</legend>
@@ -522,7 +571,7 @@ function renderMatchForm(previous = null) {
         </fieldset>
         <p class="small muted">El 3er set es opcional. Si se definió con super tie-break, anotalo como set (ej. 10-8).</p>
         <label class="field">Fecha
-          <input type="date" name="date" value="${core.todayISO()}" required>
+          <input type="date" name="date" value="${target?.date ?? core.todayISO()}" required>
         </label>
       </div>
 
@@ -531,10 +580,11 @@ function renderMatchForm(previous = null) {
     </form>`;
 
   const form = document.getElementById('match-form');
-  if (previous) {
-    for (const [name, value] of Object.entries(previous)) {
-      if (form.elements[name]) form.elements[name].value = value;
-    }
+  const values = previous ?? (target
+    ? { a1: target.a[0], a2: target.a[1], b1: target.b[0], b2: target.b[1] }
+    : {});
+  for (const [name, value] of Object.entries(values)) {
+    if (form.elements[name]) form.elements[name].value = value;
   }
   updateMatchForm(form);
 }
@@ -610,8 +660,9 @@ async function saveMatch(form) {
     toast(problem, true);
     return;
   }
+  const fills = form.dataset.fills || undefined;
   const league = await act(
-    { action: 'addMatches', matches: [{ date: m.date, a: m.a, b: m.b, sets: m.sets }] },
+    { action: 'addMatches', matches: [{ date: m.date, a: m.a, b: m.b, sets: m.sets, fills }] },
     document.getElementById('save-match'),
   );
   if (league) {
@@ -632,11 +683,18 @@ function renderImport() {
       <div class="card stack">
         <p>Pegá un partido por línea. El resultado va siempre desde el lado de la primera pareja.</p>
         <pre class="example">Ana / Bruno vs Carla / Dani 6-4 3-6 7-5
-12/10 Ana / Carla vs Bruno / Dani 6-2 6-3</pre>
+12/10 Ana / Carla vs Bruno / Dani 6-2 6-3
+19/10 Ana / Dani vs Bruno / Carla</pre>
         <p class="small muted">
-          La fecha al principio es opcional (si no está, se usa la de hoy). También podés pegar filas
+          <b>Fixture:</b> un partido sin resultado (como el último) queda <b>por jugar</b>; así cargás el
+          cronograma entero y después cada uno completa su resultado. Si importás un resultado de un
+          partido que estaba por jugar, lo completa.
+        </p>
+        <p class="small muted">
+          La fecha al principio es opcional (en un partido jugado, si no está, se usa la de hoy). También podés pegar filas
           copiadas de Excel o Google Sheets, o subir un CSV con las columnas
-          <code>fecha; jugador1; jugador2; jugador3; jugador4; set1; set2; set3</code> (1 y 2 contra 3 y 4).
+          <code>fecha; jugador1; jugador2; jugador3; jugador4; set1; set2; set3</code> (1 y 2 contra 3 y 4;
+          los sets vacíos para los partidos por jugar).
           <button type="button" class="link-btn" data-action="template">Descargar plantilla</button>
         </p>
         <textarea id="import-text" class="mono" rows="8" spellcheck="false" aria-label="Partidos a importar"
@@ -667,6 +725,7 @@ function updatePreview() {
   const { items, newPlayers } = importResult();
   const count = (status) => items.filter((i) => i.status === status).length;
   const ok = count('ok');
+  const toPlay = items.filter((i) => i.status === 'ok' && !i.sets.length).length;
   const dup = count('duplicate');
   const bad = count('error');
   button.disabled = ok === 0;
@@ -681,17 +740,22 @@ function updatePreview() {
         <li><span class="badge err">Línea ${it.line}</span>
           <div><div class="raw">${esc(it.raw)}</div><div class="small err">${esc(it.error)}</div></div></li>`;
     }
+    const badge = it.status === 'duplicate' ? '<span class="badge">Ya está</span>'
+      : it.sets.length ? '<span class="badge ok">OK</span>' : '<span class="badge">Por jugar</span>';
+    const detail = it.sets.length
+      ? `${core.formatSets(it.sets)} · ${formatDay(it.date)}${it.fills ? ' · completa el programado' : ''}`
+      : formatDay(it.date);
     return `
-      <li>${it.status === 'ok' ? '<span class="badge ok">OK</span>' : '<span class="badge">Ya está</span>'}
+      <li>${badge}
         <div>
           <div>${esc(it.a.join(' · '))} <span class="muted">vs</span> ${esc(it.b.join(' · '))}</div>
-          <div class="small muted">${core.formatSets(it.sets)} · ${formatDay(it.date)}</div>
+          <div class="small muted">${detail}</div>
         </div></li>`;
   };
   box.innerHTML = `
     <div class="card">
       <p class="small">
-        <b>${plural(ok, 'partido listo', 'partidos listos')}</b>
+        <b>${plural(ok, 'partido listo', 'partidos listos')}</b>${toPlay ? ` (${toPlay} por jugar)` : ''}
         ${dup ? ` · ${plural(dup, 'ya cargado', 'ya cargados')} (se omite${dup === 1 ? '' : 'n'})` : ''}
         ${bad ? ` · <span class="err">${plural(bad, 'línea con error', 'líneas con errores')}</span>` : ''}
       </p>
@@ -726,10 +790,12 @@ async function readTextFile(file) {
 
 function templateCSV() {
   const today = core.todayISO();
+  const nextWeek = core.todayISO(new Date(Date.now() + 7 * 864e5));
   return [
     core.CSV_HEADER.join(';'),
     `${today};Ana;Bruno;Carla;Dani;6-4;3-6;7-5`,
     `${today};Ana;Carla;Bruno;Dani;6-2;6-3;`,
+    `${nextWeek};Ana;Dani;Bruno;Carla;;;`,
   ].join('\r\n');
 }
 
@@ -772,7 +838,8 @@ const actions = {
     if (!match) return;
     const names = playerNames(state.league);
     const pair = (ids) => ids.map((id) => names.get(id)).join(' y ');
-    if (!confirm(`¿Borrar el partido ${pair(match.a)} vs ${pair(match.b)} (${core.formatSets(match.sets)})?`)) return;
+    const result = core.isPending(match) ? 'por jugar' : core.formatSets(match.sets);
+    if (!confirm(`¿Borrar el partido ${pair(match.a)} vs ${pair(match.b)} (${result})?`)) return;
     if (await act({ action: 'deleteMatch', matchId: match.id }, button)) {
       toast('Partido borrado');
       render();
@@ -794,6 +861,10 @@ const actions = {
     if (!name || core.cleanName(name) === state.league.name) return;
     if (await act({ action: 'renameLeague', name }, button)) render();
   },
+  'match-list'(button) {
+    state.matchList = button.dataset.list;
+    render();
+  },
   'forget-league'() {
     if (!confirm('La liga no se borra: solo deja de aparecer en “Tus ligas” en este dispositivo.')) return;
     forget(state.id);
@@ -806,7 +877,7 @@ const actions = {
     const previous = Object.fromEntries(new FormData(form));
     if (await act({ action: 'addPlayer', name }, button)) {
       toast(`${core.cleanName(name)} se sumó a la liga`);
-      renderMatchForm(previous);
+      renderMatchForm(previous, currentLocation().arg);
     }
   },
   'do-import': doImport,
