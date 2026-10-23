@@ -348,8 +348,8 @@ function standingsView(league) {
             <th title="Partidos jugados">PJ</th>
             <th title="Partidos ganados">PG</th>
             <th title="Partidos perdidos">PP</th>
-            <th class="opt" title="Diferencia de sets">±S</th>
-            <th title="Diferencia de games">±G</th>
+            <th class="opt diff" title="Diferencia de sets">±S</th>
+            <th class="diff" title="Diferencia de games">±G</th>
             <th class="pts" title="Puntos">Pts</th>
           </tr>
         </thead>
@@ -361,8 +361,8 @@ function standingsView(league) {
               <td>${r.pj}</td>
               <td>${r.pg}</td>
               <td>${r.pp}</td>
-              <td class="opt">${signed(r.sf - r.sc)}</td>
-              <td>${signed(r.gf - r.gc)}</td>
+              <td class="opt diff">${signed(r.sf - r.sc)}</td>
+              <td class="diff">${signed(r.gf - r.gc)}</td>
               <td class="pts">${r.pts}</td>
             </tr>`).join('')}
         </tbody>

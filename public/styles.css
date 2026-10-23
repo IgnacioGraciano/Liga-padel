@@ -293,7 +293,7 @@ legend {
   text-align: right;
   text-transform: uppercase;
 }
-.standings td { padding: 12px 6px; border-top: 1px solid var(--line); text-align: right; }
+.standings td { padding: 12px 6px; border-top: 1px solid var(--line); text-align: right; vertical-align: baseline; }
 .standings .pos { width: 46px; padding-left: 12px; text-align: center; color: var(--muted); }
 .standings .pos span {
   display: inline-grid;
@@ -313,6 +313,9 @@ legend {
 }
 .standings .pts { padding-right: 16px; font-size: 1.05rem; font-weight: 700; }
 .standings th.pts { font-size: 0.7rem; }
+/* Sets y games solo desempatan: más chicos y suaves que PJ, PG y PP. */
+.standings td.diff { color: var(--muted); font-size: 0.8rem; }
+.standings th.diff { font-size: 0.62rem; }
 .standings tbody tr { cursor: pointer; }
 .standings tbody tr:hover td { background: var(--soft); }
 .standings .leader .pos span { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
