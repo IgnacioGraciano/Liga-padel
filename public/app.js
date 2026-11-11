@@ -569,7 +569,7 @@ function renderMatchForm(previous = null, fillId = '') {
             ${[1, 2, 3].map(setRow).join('')}
           </div>
         </fieldset>
-        <p class="small muted">El 3er set es opcional. Si se definió con super tie-break, anotalo como set (ej. 10-8).</p>
+        <p class="small muted">El 3er set es opcional. Si se definió con super tie-break, anotalo como set (ej. 10-8).${target ? '' : ' Si dejás el resultado vacío, el partido queda <b>por jugar</b>.'}</p>
         <label class="field">Fecha
           <input type="date" name="date" value="${target?.date ?? core.todayISO()}" required>
         </label>
@@ -610,11 +610,22 @@ function readMatchForm(form) {
   };
 }
 
-function matchFormProblem(m) {
+// Sin ningún set cargado (y si no es el resultado de un programado) el partido
+// se guarda como por jugar.
+const isScheduling = (form, m) => !form.dataset.fills && !m.sets.length && !m.incomplete;
+
+function matchFormProblem(m, form) {
   const ids = [...m.a, ...m.b];
   if (ids.some((id) => !id)) return 'Elegí a los 4 jugadores.';
   if (new Set(ids).size < 4) return 'Hay un jugador repetido.';
   if (m.incomplete) return 'Completá los games de los dos lados en cada set.';
+  if (isScheduling(form, m)) {
+    const key = core.pairsKey(m.a, m.b);
+    if (state.league.matches.some((x) => core.pairsKey(x.a, x.b) === key)) {
+      return 'Ese partido ya está cargado (jugado o por jugar).';
+    }
+    return null;
+  }
   if (!m.sets.length) return 'Cargá el resultado.';
   const error = core.setsError(m.sets);
   if (error) return `${error}.`;
@@ -641,10 +652,13 @@ function updateMatchForm(form) {
   document.getElementById('head-b').textContent = pairLabel(m.b, 'Pareja 2');
 
   const verdict = document.getElementById('verdict');
-  const problem = matchFormProblem(m);
-  if (problem) {
+  const button = document.getElementById('save-match');
+  const scheduling = isScheduling(form, m);
+  button.textContent = scheduling ? 'Guardar como por jugar' : 'Guardar partido';
+  const problem = matchFormProblem(m, form);
+  if (problem || scheduling) {
     verdict.className = 'verdict';
-    verdict.textContent = problem;
+    verdict.textContent = problem ?? 'Sin resultado: se guarda como partido por jugar.';
     return;
   }
   const s = core.summarize(m.sets);
@@ -655,19 +669,27 @@ function updateMatchForm(form) {
 
 async function saveMatch(form) {
   const m = readMatchForm(form);
-  const problem = matchFormProblem(m);
+  const problem = matchFormProblem(m, form);
   if (problem) {
     toast(problem, true);
     return;
   }
+  const scheduling = isScheduling(form, m);
   const fills = form.dataset.fills || undefined;
+  const date = scheduling && !core.isValidISODate(m.date) ? null : m.date;
   const league = await act(
-    { action: 'addMatches', matches: [{ date: m.date, a: m.a, b: m.b, sets: m.sets, fills }] },
+    { action: 'addMatches', matches: [{ date, a: m.a, b: m.b, sets: m.sets, fills }] },
     document.getElementById('save-match'),
   );
   if (league) {
-    toast('Partido guardado');
-    go('#tabla', true);
+    if (scheduling) {
+      toast('Partido por jugar agregado');
+      state.matchList = 'pending';
+      go('#partidos', true);
+    } else {
+      toast('Partido guardado');
+      go('#tabla', true);
+    }
   }
 }
 
